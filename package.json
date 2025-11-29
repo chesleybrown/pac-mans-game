@@ -1,0 +1,20 @@
+{
+  "name": "pac-mans-game",
+  "version": "1.0.0",
+  "description": "A 3D web-based horror-themed PAC-man game where you save ghosts from PAC-man.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": ["pac-man", "horror", "3d", "game", "three.js"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "three": "^0.168.0"
+  },
+  "devDependencies": {
+    "vite": "^7.2.4"
+  }
+}
