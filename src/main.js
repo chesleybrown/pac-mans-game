@@ -24,9 +24,15 @@ const PLAYER_SPEED = 2.5; // Slower player speed
 const PACMAN_SPEED = 5;
 const GHOST_SPEED = 2.5;
 const GHOST_FLEE_SPEED = 3.5;
+const GHOST_SCARED_SPEED = 1.5; // Slower speed when PAC-MAN is powered up
 const GHOST_TARGET_SNAP_DISTANCE = 0.5; // Distance at which ghosts snap to cell center
 const REVERSE_MOVEMENT_PENALTY = 100; // Penalty for ghosts reversing direction
 const WALL_PUSH_BUFFER = 0.1; // Extra distance to push player away from walls
+
+// PAC-MAN hunting behavior
+const PACMAN_SIGHT_RANGE = 20; // How far PAC-MAN can see
+const PACMAN_HUNT_SPEED_MULTIPLIER = 1.3; // Speed boost when hunting
+const PACMAN_SPEED_PER_GHOST = 0.5; // Additional speed per carried ghost
 
 // Ghost navigation helpers
 const GHOST_DIRECTION_VECTORS = [
@@ -650,7 +656,9 @@ function createPacman() {
         targetZ: 15,
         direction: { x: 1, z: 0 },
         mouthOpen: 0,
-        speed: PACMAN_SPEED
+        speed: PACMAN_SPEED,
+        hunting: false, // Is PAC-MAN actively hunting the player?
+        lastKnownPlayerPos: null // Last position where PAC-MAN saw the player
     };
 
     scene.add(pacmanGroup);
@@ -752,6 +760,7 @@ function createGhosts() {
             mesh: ghostGroup,
             name: ghostNames[index],
             color: color,
+            originalColor: color, // Store original color for when power-up ends
             x: spawnPos.x,
             z: spawnPos.z,
             targetX: initialTargetX,
@@ -763,7 +772,8 @@ function createGhosts() {
             guideTarget: null,
             speed: GHOST_SPEED,
             scatterTarget: scatterTargets[index], // Unique escape direction
-            lastSlimeTime: 0 // Timer for slime trail
+            lastSlimeTime: 0, // Timer for slime trail
+            scared: false // Is the ghost scared (blue) due to power-up?
         });
 
         scene.add(ghostGroup);
@@ -1231,7 +1241,92 @@ function pushPlayerOutOfWalls() {
     }
 }
 
+// Check if PAC-MAN has line of sight to a position
+function pacmanCanSeePosition(targetX, targetZ) {
+    const pacmanWorldX = pacman.mesh.position.x;
+    const pacmanWorldZ = pacman.mesh.position.z;
+
+    const dx = targetX - pacmanWorldX;
+    const dz = targetZ - pacmanWorldZ;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+
+    if (distance > PACMAN_SIGHT_RANGE) return false;
+
+    // Raycast through the maze to check for walls
+    const steps = Math.ceil(distance / (CELL_SIZE / 2));
+    for (let i = 1; i < steps; i++) {
+        const t = i / steps;
+        const checkX = pacmanWorldX + dx * t;
+        const checkZ = pacmanWorldZ + dz * t;
+        const cellX = Math.floor(checkX / CELL_SIZE);
+        const cellZ = Math.floor(checkZ / CELL_SIZE);
+
+        if (cellX >= 0 && cellX < MAZE_WIDTH && cellZ >= 0 && cellZ < MAZE_HEIGHT) {
+            if (MAZE_LAYOUT[cellZ][cellX] === 1) {
+                return false; // Wall blocks line of sight
+            }
+        }
+    }
+
+    return true;
+}
+
+// Calculate PAC-MAN's current speed based on game state
+function calculatePacmanSpeed() {
+    let speed = PACMAN_SPEED;
+
+    // Increase speed based on number of ghosts player is carrying
+    const carriedGhosts = gameState.collectedGhosts.length;
+    if (carriedGhosts > 0) {
+        speed += carriedGhosts * PACMAN_SPEED_PER_GHOST;
+    }
+
+    // Additional speed boost when hunting
+    if (pacman.hunting) {
+        speed *= PACMAN_HUNT_SPEED_MULTIPLIER;
+    }
+
+    // Power-up speed boost
+    if (gameState.pacmanPowered) {
+        speed *= 1.5;
+    }
+
+    return speed;
+}
+
 function updatePacman(delta) {
+    // Check if PAC-MAN can see the player
+    const canSeePlayer = pacmanCanSeePosition(camera.position.x, camera.position.z);
+
+    if (canSeePlayer) {
+        pacman.hunting = true;
+        pacman.lastKnownPlayerPos = {
+            x: Math.floor(camera.position.x / CELL_SIZE),
+            z: Math.floor(camera.position.z / CELL_SIZE)
+        };
+    } else if (pacman.hunting && pacman.lastKnownPlayerPos) {
+        // Check if PAC-MAN reached last known position
+        const distToLastKnown = Math.abs(pacman.x - pacman.lastKnownPlayerPos.x) +
+            Math.abs(pacman.z - pacman.lastKnownPlayerPos.z);
+        if (distToLastKnown <= 1) {
+            // Lost the player, return to normal behavior
+            pacman.hunting = false;
+            pacman.lastKnownPlayerPos = null;
+        }
+    }
+
+    // Update HUD to show hunting status
+    const huntingEl = document.getElementById('pacman-hunting');
+    if (huntingEl) {
+        if (pacman.hunting) {
+            huntingEl.textContent = 'HUNTING YOU!';
+            huntingEl.style.color = '#ff0000';
+        } else {
+            huntingEl.textContent = 'Wandering';
+            huntingEl.style.color = '#fff';
+        }
+    }
+
     // Animate mouth
     const mouthSpeed = 15;
     pacman.mouthOpen = (Math.sin(Date.now() * 0.01 * mouthSpeed) + 1) / 2;
@@ -1262,8 +1357,8 @@ function updatePacman(delta) {
         // Check for power pellet eating
         eatPowerPellets();
     } else {
-        // Move towards target
-        const speed = gameState.pacmanPowered ? pacman.speed * 1.5 : pacman.speed;
+        // Move towards target with dynamic speed
+        const speed = calculatePacmanSpeed();
         pacman.mesh.position.x += (dx / dist) * speed * delta;
         pacman.mesh.position.z += (dz / dist) * speed * delta;
 
@@ -1319,8 +1414,25 @@ function pickPacmanDirection() {
         possibleDirections.push({ x: -pacman.direction.x, z: -pacman.direction.z });
     }
 
-    // If powered, chase ghosts
-    if (gameState.pacmanPowered) {
+    // Priority 1: If hunting the player, chase them
+    if (pacman.hunting && pacman.lastKnownPlayerPos) {
+        let bestDir = possibleDirections[0];
+        let bestDist = Infinity;
+
+        possibleDirections.forEach(dir => {
+            const newX = pacman.x + dir.x;
+            const newZ = pacman.z + dir.z;
+            const dist = Math.abs(newX - pacman.lastKnownPlayerPos.x) + Math.abs(newZ - pacman.lastKnownPlayerPos.z);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestDir = dir;
+            }
+        });
+
+        pacman.direction = bestDir;
+    }
+    // Priority 2: If powered, chase ghosts
+    else if (gameState.pacmanPowered) {
         let closestGhost = null;
         let closestDist = Infinity;
 
@@ -1444,6 +1556,13 @@ function updateGhosts(delta) {
     ghosts.forEach(ghost => {
         if (!ghost.alive || ghost.saved || ghost.collected) return;
 
+        // Update scared state based on PAC-MAN power
+        const shouldBeScared = gameState.pacmanPowered;
+        if (shouldBeScared !== ghost.scared) {
+            ghost.scared = shouldBeScared;
+            updateGhostAppearance(ghost);
+        }
+
         // Get current cell center position
         const currentCellX = ghost.x * CELL_SIZE + CELL_SIZE / 2;
         const currentCellZ = ghost.z * CELL_SIZE + CELL_SIZE / 2;
@@ -1510,8 +1629,8 @@ function updateGhosts(delta) {
                 ghost.targetZ = ghost.z + bestDir.z;
             }
         } else {
-            // Move towards target cell center
-            const speed = GHOST_SPEED;
+            // Move towards target cell center - slower when scared
+            const speed = ghost.scared ? GHOST_SCARED_SPEED : GHOST_SPEED;
             const moveAmount = speed * delta;
 
             if (distToTarget > 0.01) {
@@ -1534,6 +1653,35 @@ function updateGhosts(delta) {
         const distToPlayer = ghost.mesh.position.distanceTo(camera.position);
         if (distToPlayer < 8) {
             ghost.mesh.lookAt(camera.position.x, ghost.mesh.position.y, camera.position.z);
+        }
+    });
+}
+
+// Ghost appearance update (for scared/normal state)
+function updateGhostAppearance(ghost) {
+    const scaredColor = 0x0000ff; // Blue when scared
+    const color = ghost.scared ? scaredColor : ghost.originalColor;
+
+    // Update all mesh materials in the ghost group
+    ghost.mesh.traverse((child) => {
+        if (child.isMesh && child.material && child.material.color) {
+            // Skip eyes (white) and pupils (blue)
+            const isEye = child.material.color.getHex() === 0xffffff;
+            const isPupil = child.material.color.getHex() === 0x0000ff && !ghost.scared;
+
+            if (!isEye && !isPupil) {
+                child.material.color.setHex(color);
+                child.material.emissive.setHex(color);
+                // Make scared ghosts flicker/pulse
+                child.material.emissiveIntensity = ghost.scared ? 0.6 : 0.3;
+            }
+        }
+    });
+
+    // Update point light color
+    ghost.mesh.children.forEach(child => {
+        if (child.isPointLight) {
+            child.color.setHex(color);
         }
     });
 }

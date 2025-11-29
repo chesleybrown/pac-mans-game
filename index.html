@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,19 +11,19 @@
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             overflow: hidden;
             background: #000;
             font-family: 'Courier New', monospace;
         }
-        
+
         #game-container {
             width: 100vw;
             height: 100vh;
             position: relative;
         }
-        
+
         #hud {
             position: fixed;
             top: 20px;
@@ -32,11 +33,11 @@
             z-index: 100;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
         }
-        
+
         #hud div {
             margin: 8px 0;
         }
-        
+
         #instructions {
             position: fixed;
             bottom: 20px;
@@ -46,7 +47,7 @@
             z-index: 100;
             text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
         }
-        
+
         #crosshair {
             position: fixed;
             top: 50%;
@@ -59,14 +60,14 @@
             z-index: 100;
             pointer-events: none;
         }
-        
+
         #crosshair::before,
         #crosshair::after {
             content: '';
             position: absolute;
             background: rgba(255, 255, 255, 0.5);
         }
-        
+
         #crosshair::before {
             top: 50%;
             left: -4px;
@@ -74,7 +75,7 @@
             height: 2px;
             transform: translateY(-50%);
         }
-        
+
         #crosshair::after {
             left: 50%;
             top: -4px;
@@ -82,7 +83,7 @@
             width: 2px;
             transform: translateX(-50%);
         }
-        
+
         #start-screen {
             position: fixed;
             top: 0;
@@ -97,7 +98,7 @@
             z-index: 200;
             color: #fff;
         }
-        
+
         #start-screen h1 {
             font-size: 48px;
             color: #ff0;
@@ -105,7 +106,7 @@
             margin-bottom: 20px;
             animation: flicker 2s infinite;
         }
-        
+
         #start-screen p {
             font-size: 18px;
             color: #aaa;
@@ -114,12 +115,12 @@
             text-align: center;
             line-height: 1.6;
         }
-        
+
         #start-screen .highlight {
             color: #f00;
             text-shadow: 0 0 10px #f00;
         }
-        
+
         #start-screen button {
             margin-top: 30px;
             padding: 15px 40px;
@@ -131,21 +132,37 @@
             cursor: pointer;
             transition: all 0.3s;
         }
-        
+
         #start-screen button:hover {
             background: #ff0;
             color: #000;
             box-shadow: 0 0 30px #ff0;
         }
-        
+
         @keyframes flicker {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.8; }
-            52% { opacity: 1; }
-            54% { opacity: 0.7; }
-            56% { opacity: 1; }
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.8;
+            }
+
+            52% {
+                opacity: 1;
+            }
+
+            54% {
+                opacity: 0.7;
+            }
+
+            56% {
+                opacity: 1;
+            }
         }
-        
+
         #game-over {
             position: fixed;
             top: 0;
@@ -160,22 +177,22 @@
             z-index: 200;
             color: #fff;
         }
-        
+
         #game-over h1 {
             font-size: 48px;
             margin-bottom: 20px;
         }
-        
+
         #game-over.win h1 {
             color: #0f0;
             text-shadow: 0 0 20px #0f0;
         }
-        
+
         #game-over.lose h1 {
             color: #f00;
             text-shadow: 0 0 20px #f00;
         }
-        
+
         .warning {
             position: fixed;
             top: 50%;
@@ -188,13 +205,23 @@
             display: none;
             animation: pulse 0.5s ease-in-out infinite;
         }
-        
+
         @keyframes pulse {
-            0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-            50% { opacity: 0.7; transform: translate(-50%, -50%) scale(1.1); }
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
+
+            50% {
+                opacity: 0.7;
+                transform: translate(-50%, -50%) scale(1.1);
+            }
         }
     </style>
 </head>
+
 <body>
     <div id="start-screen">
         <h1>PAC-MAN'S GAME</h1>
@@ -205,28 +232,30 @@
         <p><strong>Controls:</strong> WASD to move, Mouse to look, Click to collect ghosts</p>
         <button id="start-button">ENTER THE MAZE</button>
     </div>
-    
+
     <div id="game-container">
         <div id="hud">
             <div>Ghosts Saved: <span id="ghosts-saved">0</span> / <span id="total-ghosts">4</span></div>
             <div>Ghosts Remaining: <span id="ghosts-alive">4</span></div>
             <div>Carrying: <span id="ghosts-collected">None</span></div>
             <div>PAC-MAN Power: <span id="pacman-power">NORMAL</span></div>
+            <div>PAC-MAN: <span id="pacman-hunting">Wandering</span></div>
         </div>
         <div id="crosshair"></div>
         <div id="instructions">
             WASD - Move | Mouse - Look | Click - Collect Ghost | Return to green zone to save!
         </div>
     </div>
-    
+
     <div class="warning" id="pacman-warning">⚠ PAC-MAN IS NEAR ⚠</div>
-    
+
     <div id="game-over">
         <h1 id="game-over-title">GAME OVER</h1>
         <p id="game-over-message"></p>
         <button onclick="location.reload()">PLAY AGAIN</button>
     </div>
-    
+
     <script type="module" src="/src/main.js"></script>
 </body>
+
 </html>
