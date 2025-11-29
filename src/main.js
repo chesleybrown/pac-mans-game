@@ -20,11 +20,13 @@ const PLAYER_SPAWN = { x: 1, z: 19 };
 const CELL_SIZE = 4;
 const WALL_HEIGHT = 5;
 const PLAYER_HEIGHT = 1.7;
-const PLAYER_SPEED = 4;
-const PLAYER_RUN_SPEED = 7;
+const PLAYER_SPEED = 2.5; // Slower player speed
 const PACMAN_SPEED = 5;
-const GHOST_SPEED = 3;
-const GHOST_FLEE_SPEED = 5;
+const GHOST_SPEED = 2.5;
+const GHOST_FLEE_SPEED = 3.5;
+const GHOST_TARGET_SNAP_DISTANCE = 0.5; // Distance at which ghosts snap to cell center
+const REVERSE_MOVEMENT_PENALTY = 100; // Penalty for ghosts reversing direction
+const WALL_PUSH_BUFFER = 0.1; // Extra distance to push player away from walls
 
 // Audio
 let audioContext;
@@ -74,8 +76,7 @@ const moveState = {
     forward: false,
     backward: false,
     left: false,
-    right: false,
-    running: false
+    right: false
 };
 
 // Clock for delta time
@@ -152,72 +153,109 @@ function createMaze() {
         return seed / 233280;
     };
     
-    // Create horror-style wall texture with blood splatters and claw marks
-    const wallCanvas = document.createElement('canvas');
-    wallCanvas.width = 256;
-    wallCanvas.height = 256;
-    const wallCtx = wallCanvas.getContext('2d');
+    // Create base wall texture (clean neon blue)
+    const createWallTexture = (addHorror, horrorType) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        
+        // Base neon blue color
+        ctx.fillStyle = '#0033aa';
+        ctx.fillRect(0, 0, 256, 256);
+        
+        // Add grid lines for retro look
+        ctx.strokeStyle = '#0055ff';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 256; i += 32) {
+            ctx.beginPath();
+            ctx.moveTo(i, 0);
+            ctx.lineTo(i, 256);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, i);
+            ctx.lineTo(256, i);
+            ctx.stroke();
+        }
+        
+        // Add horror elements only on some textures
+        if (addHorror) {
+            if (horrorType === 'blood') {
+                // Blood splatters - vary size and count
+                ctx.fillStyle = '#8b0000';
+                const splatterCount = 1 + Math.floor(seededRandom() * 3);
+                for (let i = 0; i < splatterCount; i++) {
+                    const x = 30 + seededRandom() * 196;
+                    const y = 30 + seededRandom() * 196;
+                    const radius = 5 + seededRandom() * 25; // Varied size
+                    ctx.beginPath();
+                    ctx.arc(x, y, radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Drips (varied)
+                    const dripCount = Math.floor(seededRandom() * 4);
+                    for (let j = 0; j < dripCount; j++) {
+                        ctx.fillRect(x - 5 + seededRandom() * 10, y, 2 + seededRandom() * 3, 15 + seededRandom() * 50);
+                    }
+                }
+            } else if (horrorType === 'claw') {
+                // Claw marks
+                ctx.strokeStyle = '#330000';
+                ctx.lineWidth = 2 + seededRandom() * 2;
+                const x = 40 + seededRandom() * 120;
+                const y = 30 + seededRandom() * 80;
+                const clawCount = 2 + Math.floor(seededRandom() * 2);
+                for (let j = 0; j < clawCount; j++) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + j * (12 + seededRandom() * 8), y);
+                    ctx.lineTo(x + j * (12 + seededRandom() * 8) + 5 + seededRandom() * 10, y + 40 + seededRandom() * 60);
+                    ctx.stroke();
+                }
+            } else if (horrorType === 'teeth') {
+                // Small tooth-like shapes
+                ctx.fillStyle = '#ddcccc';
+                const teethX = 50 + seededRandom() * 150;
+                const teethY = 80 + seededRandom() * 100;
+                const teethCount = 3 + Math.floor(seededRandom() * 4);
+                for (let j = 0; j < teethCount; j++) {
+                    ctx.beginPath();
+                    ctx.moveTo(teethX + j * 15, teethY);
+                    ctx.lineTo(teethX + j * 15 + 5, teethY + 15 + seededRandom() * 10);
+                    ctx.lineTo(teethX + j * 15 + 10, teethY);
+                    ctx.fill();
+                }
+            }
+        }
+        
+        return new THREE.CanvasTexture(canvas);
+    };
     
-    // Base neon blue color
-    wallCtx.fillStyle = '#0033aa';
-    wallCtx.fillRect(0, 0, 256, 256);
-    
-    // Add grid lines for retro look
-    wallCtx.strokeStyle = '#0055ff';
-    wallCtx.lineWidth = 2;
-    for (let i = 0; i < 256; i += 32) {
-        wallCtx.beginPath();
-        wallCtx.moveTo(i, 0);
-        wallCtx.lineTo(i, 256);
-        wallCtx.stroke();
-        wallCtx.beginPath();
-        wallCtx.moveTo(0, i);
-        wallCtx.lineTo(256, i);
-        wallCtx.stroke();
-    }
-    
-    // Add blood splatters (deterministic positions)
-    wallCtx.fillStyle = '#8b0000';
+    // Create several wall material variations
+    const wallMaterials = [];
+    // Clean walls (majority)
     for (let i = 0; i < 5; i++) {
-        const x = seededRandom() * 256;
-        const y = seededRandom() * 256;
-        const radius = 10 + seededRandom() * 20;
-        wallCtx.beginPath();
-        wallCtx.arc(x, y, radius, 0, Math.PI * 2);
-        wallCtx.fill();
-        // Drips
-        for (let j = 0; j < 3; j++) {
-            wallCtx.fillRect(x - 2 + seededRandom() * 4, y, 3, 20 + seededRandom() * 40);
-        }
+        const texture = createWallTexture(false, null);
+        wallMaterials.push(new THREE.MeshStandardMaterial({
+            map: texture,
+            emissive: 0x001166,
+            emissiveIntensity: 0.2,
+            roughness: 0.8,
+            metalness: 0.2
+        }));
+    }
+    // Horror walls (minority)
+    const horrorTypes = ['blood', 'claw', 'teeth', 'blood', 'claw'];
+    for (let i = 0; i < 5; i++) {
+        const texture = createWallTexture(true, horrorTypes[i]);
+        wallMaterials.push(new THREE.MeshStandardMaterial({
+            map: texture,
+            emissive: 0x001166,
+            emissiveIntensity: 0.2,
+            roughness: 0.8,
+            metalness: 0.2
+        }));
     }
     
-    // Add claw marks (deterministic positions)
-    wallCtx.strokeStyle = '#330000';
-    wallCtx.lineWidth = 3;
-    for (let i = 0; i < 3; i++) {
-        const x = 50 + seededRandom() * 150;
-        const y = 50 + seededRandom() * 100;
-        for (let j = 0; j < 3; j++) {
-            wallCtx.beginPath();
-            wallCtx.moveTo(x + j * 15, y);
-            wallCtx.lineTo(x + j * 15 + 10, y + 60);
-            wallCtx.stroke();
-        }
-    }
-    
-    const wallTexture = new THREE.CanvasTexture(wallCanvas);
-    wallTexture.wrapS = THREE.RepeatWrapping;
-    wallTexture.wrapT = THREE.RepeatWrapping;
-    
-    const wallMaterial = new THREE.MeshStandardMaterial({
-        map: wallTexture,
-        emissive: 0x001166,
-        emissiveIntensity: 0.2,
-        roughness: 0.8,
-        metalness: 0.2
-    });
-    
-    // Create horror floor texture
+    // Create horror floor texture with variation
     const floorCanvas = document.createElement('canvas');
     floorCanvas.width = 512;
     floorCanvas.height = 512;
@@ -241,31 +279,36 @@ function createMaze() {
         floorCtx.stroke();
     }
     
-    // Blood pools (deterministic positions)
+    // Blood pools - fewer and more varied in size
     floorCtx.fillStyle = '#3a0000';
-    for (let i = 0; i < 8; i++) {
-        const x = seededRandom() * 512;
-        const y = seededRandom() * 512;
+    const bloodPoolCount = 3 + Math.floor(seededRandom() * 3);
+    for (let i = 0; i < bloodPoolCount; i++) {
+        const x = 50 + seededRandom() * 412;
+        const y = 50 + seededRandom() * 412;
+        const rx = 15 + seededRandom() * 50; // Varied radius X
+        const ry = 10 + seededRandom() * 35; // Varied radius Y
         floorCtx.beginPath();
-        floorCtx.ellipse(x, y, 30 + seededRandom() * 40, 20 + seededRandom() * 30, seededRandom() * Math.PI, 0, Math.PI * 2);
+        floorCtx.ellipse(x, y, rx, ry, seededRandom() * Math.PI, 0, Math.PI * 2);
         floorCtx.fill();
     }
     
-    // Skull symbols (deterministic positions)
+    // Skull symbols - fewer
     floorCtx.fillStyle = '#1a1a2a';
-    for (let i = 0; i < 4; i++) {
-        const x = 100 + seededRandom() * 300;
-        const y = 100 + seededRandom() * 300;
+    const skullCount = 1 + Math.floor(seededRandom() * 2);
+    for (let i = 0; i < skullCount; i++) {
+        const x = 100 + seededRandom() * 312;
+        const y = 100 + seededRandom() * 312;
+        const size = 15 + seededRandom() * 15;
         // Simple skull shape
         floorCtx.beginPath();
-        floorCtx.arc(x, y, 20, 0, Math.PI * 2);
+        floorCtx.arc(x, y, size, 0, Math.PI * 2);
         floorCtx.fill();
-        floorCtx.fillRect(x - 10, y + 15, 20, 15);
+        floorCtx.fillRect(x - size * 0.5, y + size * 0.75, size, size * 0.75);
         // Eye sockets
         floorCtx.fillStyle = '#0a0a15';
         floorCtx.beginPath();
-        floorCtx.arc(x - 7, y - 3, 5, 0, Math.PI * 2);
-        floorCtx.arc(x + 7, y - 3, 5, 0, Math.PI * 2);
+        floorCtx.arc(x - size * 0.35, y - size * 0.15, size * 0.25, 0, Math.PI * 2);
+        floorCtx.arc(x + size * 0.35, y - size * 0.15, size * 0.25, 0, Math.PI * 2);
         floorCtx.fill();
         floorCtx.fillStyle = '#1a1a2a';
     }
@@ -370,8 +413,18 @@ function createMaze() {
             const posZ = z * CELL_SIZE + CELL_SIZE / 2;
             
             if (cell === 1) {
-                // Wall
-                const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                // Wall - pick material based on position (deterministic variation)
+                // About 30% of walls get horror textures
+                const wallSeed = (x * 31 + z * 17) % 100;
+                let materialIndex;
+                if (wallSeed < 70) {
+                    // Clean wall (majority)
+                    materialIndex = wallSeed % 5;
+                } else {
+                    // Horror wall (minority)
+                    materialIndex = 5 + (wallSeed % 5);
+                }
+                const wall = new THREE.Mesh(wallGeometry, wallMaterials[materialIndex]);
                 wall.position.set(posX, WALL_HEIGHT / 2, posZ);
                 wall.castShadow = true;
                 wall.receiveShadow = true;
@@ -661,10 +714,6 @@ function setupEventListeners() {
             case 'KeyS': moveState.backward = true; break;
             case 'KeyA': moveState.left = true; break;
             case 'KeyD': moveState.right = true; break;
-            case 'ShiftLeft':
-            case 'ShiftRight':
-                moveState.running = true;
-                break;
         }
     });
     
@@ -674,10 +723,6 @@ function setupEventListeners() {
             case 'KeyS': moveState.backward = false; break;
             case 'KeyA': moveState.left = false; break;
             case 'KeyD': moveState.right = false; break;
-            case 'ShiftLeft':
-            case 'ShiftRight':
-                moveState.running = false;
-                break;
         }
     });
     
@@ -931,7 +976,7 @@ function checkPlayerPacmanCollision() {
 function updatePlayer(delta) {
     if (!controls.isLocked) return;
     
-    const speed = moveState.running ? PLAYER_RUN_SPEED : PLAYER_SPEED;
+    const speed = PLAYER_SPEED;
     
     velocity.x -= velocity.x * 10.0 * delta;
     velocity.z -= velocity.z * 10.0 * delta;
@@ -963,16 +1008,19 @@ function updatePlayer(delta) {
     const newPosX = camera.position.x + moveX;
     const newPosZ = camera.position.z + moveZ;
     
-    if (!checkWallCollision(newPosX, camera.position.z, 0.3)) {
+    if (!checkWallCollision(newPosX, camera.position.z, 0.4)) {
         camera.position.x = newPosX;
     }
-    if (!checkWallCollision(camera.position.x, newPosZ, 0.3)) {
+    if (!checkWallCollision(camera.position.x, newPosZ, 0.4)) {
         camera.position.z = newPosZ;
     }
     
+    // Push player out if stuck
+    pushPlayerOutOfWalls();
+    
     // Clamp to maze bounds
-    camera.position.x = Math.max(CELL_SIZE, Math.min((MAZE_WIDTH - 1) * CELL_SIZE, camera.position.x));
-    camera.position.z = Math.max(CELL_SIZE, Math.min((MAZE_HEIGHT - 1) * CELL_SIZE, camera.position.z));
+    camera.position.x = Math.max(CELL_SIZE + 0.5, Math.min((MAZE_WIDTH - 1) * CELL_SIZE - 0.5, camera.position.x));
+    camera.position.z = Math.max(CELL_SIZE + 0.5, Math.min((MAZE_HEIGHT - 1) * CELL_SIZE - 0.5, camera.position.z));
     
     // Update feet position
     playerFeet.position.set(camera.position.x, 0, camera.position.z);
@@ -998,14 +1046,20 @@ function checkWallCollision(x, z, radius) {
             const checkX = cellX + dx;
             const checkZ = cellZ + dz;
             
-            if (checkX < 0 || checkX >= MAZE_WIDTH || checkZ < 0 || checkZ >= MAZE_HEIGHT) continue;
+            if (checkX < 0 || checkX >= MAZE_WIDTH || checkZ < 0 || checkZ >= MAZE_HEIGHT) {
+                // Treat out of bounds as wall
+                return true;
+            }
             
             if (MAZE_LAYOUT[checkZ][checkX] === 1) {
-                const wallCenterX = checkX * CELL_SIZE + CELL_SIZE / 2;
-                const wallCenterZ = checkZ * CELL_SIZE + CELL_SIZE / 2;
+                const wallMinX = checkX * CELL_SIZE;
+                const wallMaxX = (checkX + 1) * CELL_SIZE;
+                const wallMinZ = checkZ * CELL_SIZE;
+                const wallMaxZ = (checkZ + 1) * CELL_SIZE;
                 
-                const closestX = Math.max(wallCenterX - CELL_SIZE / 2, Math.min(x, wallCenterX + CELL_SIZE / 2));
-                const closestZ = Math.max(wallCenterZ - CELL_SIZE / 2, Math.min(z, wallCenterZ + CELL_SIZE / 2));
+                // Find closest point on wall to player position
+                const closestX = Math.max(wallMinX, Math.min(x, wallMaxX));
+                const closestZ = Math.max(wallMinZ, Math.min(z, wallMaxZ));
                 
                 const distX = x - closestX;
                 const distZ = z - closestZ;
@@ -1018,6 +1072,44 @@ function checkWallCollision(x, z, radius) {
         }
     }
     return false;
+}
+
+// Push player out of walls if stuck
+function pushPlayerOutOfWalls() {
+    const radius = 0.5;
+    const cellX = Math.floor(camera.position.x / CELL_SIZE);
+    const cellZ = Math.floor(camera.position.z / CELL_SIZE);
+    
+    for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            const checkX = cellX + dx;
+            const checkZ = cellZ + dz;
+            
+            if (checkX < 0 || checkX >= MAZE_WIDTH || checkZ < 0 || checkZ >= MAZE_HEIGHT) continue;
+            
+            if (MAZE_LAYOUT[checkZ][checkX] === 1) {
+                const wallMinX = checkX * CELL_SIZE;
+                const wallMaxX = (checkX + 1) * CELL_SIZE;
+                const wallMinZ = checkZ * CELL_SIZE;
+                const wallMaxZ = (checkZ + 1) * CELL_SIZE;
+                
+                const closestX = Math.max(wallMinX, Math.min(camera.position.x, wallMaxX));
+                const closestZ = Math.max(wallMinZ, Math.min(camera.position.z, wallMaxZ));
+                
+                const distX = camera.position.x - closestX;
+                const distZ = camera.position.z - closestZ;
+                const dist = Math.sqrt(distX * distX + distZ * distZ);
+                
+                if (dist < radius && dist > 0.001) {
+                    // Push player away from wall
+                    const pushX = (distX / dist) * (radius - dist + WALL_PUSH_BUFFER);
+                    const pushZ = (distZ / dist) * (radius - dist + WALL_PUSH_BUFFER);
+                    camera.position.x += pushX;
+                    camera.position.z += pushZ;
+                }
+            }
+        }
+    }
 }
 
 function updatePacman(delta) {
@@ -1215,58 +1307,88 @@ function updateGhosts(delta) {
     ghosts.forEach(ghost => {
         if (!ghost.alive || ghost.saved || ghost.collected) return;
         
-        // Movement logic - ghosts are always trying to escape PAC-MAN
-        let targetX, targetZ;
+        // Get current cell center position
+        const currentCellX = ghost.x * CELL_SIZE + CELL_SIZE / 2;
+        const currentCellZ = ghost.z * CELL_SIZE + CELL_SIZE / 2;
         
-        // Flee from PAC-MAN using unique scatter patterns
-        const distToPacman = Math.abs(ghost.x - pacman.x) + Math.abs(ghost.z - pacman.z);
+        // Calculate target cell center if we have a target
+        const targetCellX = ghost.targetX * CELL_SIZE + CELL_SIZE / 2;
+        const targetCellZ = ghost.targetZ * CELL_SIZE + CELL_SIZE / 2;
         
-        if (distToPacman < 8) {
-            // PAC-MAN is close - flee directly away
-            const awayX = ghost.x + (ghost.x - pacman.x) * 2;
-            const awayZ = ghost.z + (ghost.z - pacman.z) * 2;
-            targetX = Math.max(1, Math.min(MAZE_WIDTH - 2, awayX));
-            targetZ = Math.max(1, Math.min(MAZE_HEIGHT - 2, awayZ));
-        } else {
-            // Move towards scatter target (unique corner for each ghost)
-            targetX = ghost.scatterTarget.x;
-            targetZ = ghost.scatterTarget.z;
-        }
+        // Distance to current target cell
+        const dx = targetCellX - ghost.mesh.position.x;
+        const dz = targetCellZ - ghost.mesh.position.z;
+        const distToTarget = Math.sqrt(dx * dx + dz * dz);
         
-        // Simple pathfinding
-        const dirs = [
-            { x: 0, z: -1 },
-            { x: 0, z: 1 },
-            { x: -1, z: 0 },
-            { x: 1, z: 0 }
-        ];
-        
-        let bestDir = null;
-        let bestDist = Infinity;
-        
-        dirs.forEach(dir => {
-            const newX = Math.floor(ghost.mesh.position.x / CELL_SIZE) + dir.x;
-            const newZ = Math.floor(ghost.mesh.position.z / CELL_SIZE) + dir.z;
+        // If we've reached the target cell (or close enough), pick new direction
+        if (distToTarget < GHOST_TARGET_SNAP_DISTANCE) {
+            // Snap to cell center
+            ghost.mesh.position.x = targetCellX;
+            ghost.mesh.position.z = targetCellZ;
+            ghost.x = ghost.targetX;
+            ghost.z = ghost.targetZ;
             
-            if (newX >= 0 && newX < MAZE_WIDTH && newZ >= 0 && newZ < MAZE_HEIGHT) {
-                if (MAZE_LAYOUT[newZ][newX] !== 1) {
-                    const dist = Math.abs(newX - targetX) + Math.abs(newZ - targetZ);
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestDir = dir;
+            // Determine escape target
+            let escapeTargetX, escapeTargetZ;
+            const distToPacman = Math.abs(ghost.x - pacman.x) + Math.abs(ghost.z - pacman.z);
+            
+            if (distToPacman < 8) {
+                // PAC-MAN is close - flee directly away
+                const awayX = ghost.x + (ghost.x - pacman.x) * 2;
+                const awayZ = ghost.z + (ghost.z - pacman.z) * 2;
+                escapeTargetX = Math.max(1, Math.min(MAZE_WIDTH - 2, awayX));
+                escapeTargetZ = Math.max(1, Math.min(MAZE_HEIGHT - 2, awayZ));
+            } else {
+                // Move towards scatter target (unique corner for each ghost)
+                escapeTargetX = ghost.scatterTarget.x;
+                escapeTargetZ = ghost.scatterTarget.z;
+            }
+            
+            // Pick next direction from valid options
+            const dirs = [
+                { x: 0, z: -1 },
+                { x: 0, z: 1 },
+                { x: -1, z: 0 },
+                { x: 1, z: 0 }
+            ];
+            
+            let bestDir = null;
+            let bestDist = Infinity;
+            
+            dirs.forEach(dir => {
+                const newX = ghost.x + dir.x;
+                const newZ = ghost.z + dir.z;
+                
+                // Don't go back the way we came (unless it's the only option)
+                const isReverse = (dir.x === -ghost.direction.x && dir.z === -ghost.direction.z);
+                
+                if (newX >= 0 && newX < MAZE_WIDTH && newZ >= 0 && newZ < MAZE_HEIGHT) {
+                    if (MAZE_LAYOUT[newZ][newX] !== 1) {
+                        const dist = Math.abs(newX - escapeTargetX) + Math.abs(newZ - escapeTargetZ);
+                        // Prefer not reversing unless it's better
+                        const adjustedDist = isReverse ? dist + REVERSE_MOVEMENT_PENALTY : dist;
+                        if (adjustedDist < bestDist) {
+                            bestDist = adjustedDist;
+                            bestDir = dir;
+                        }
                     }
                 }
-            }
-        });
-        
-        if (bestDir) {
-            const speed = ghost.guideTarget ? GHOST_FLEE_SPEED : GHOST_SPEED;
-            ghost.mesh.position.x += bestDir.x * speed * delta;
-            ghost.mesh.position.z += bestDir.z * speed * delta;
+            });
             
-            // Update cell position
-            ghost.x = Math.floor(ghost.mesh.position.x / CELL_SIZE);
-            ghost.z = Math.floor(ghost.mesh.position.z / CELL_SIZE);
+            if (bestDir) {
+                ghost.direction = bestDir;
+                ghost.targetX = ghost.x + bestDir.x;
+                ghost.targetZ = ghost.z + bestDir.z;
+            }
+        } else {
+            // Move towards target cell center
+            const speed = GHOST_SPEED;
+            const moveAmount = speed * delta;
+            
+            if (distToTarget > 0.01) {
+                ghost.mesh.position.x += (dx / distToTarget) * Math.min(moveAmount, distToTarget);
+                ghost.mesh.position.z += (dz / distToTarget) * Math.min(moveAmount, distToTarget);
+            }
         }
         
         // Floating animation
