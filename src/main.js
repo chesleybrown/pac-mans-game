@@ -150,8 +150,6 @@ let intenseMusicActive = false;
 
 // PAC-MAN geometry constants
 const PACMAN_BODY_RADIUS = 1.5;
-const PACMAN_MOUTH_RADIUS = 1.6;
-const PACMAN_MOUTH_HEIGHT = 2;
 
 function init() {
     // Scene
@@ -599,54 +597,43 @@ function createPlayerBody() {
 }
 
 function createPacman() {
-    // PAC-MAN as a creepy, larger-than-life sphere with a mouth
+    // PAC-MAN as a classic yellow sphere with a mouth
     const pacmanGroup = new THREE.Group();
 
-    // Main body
-    const bodyGeometry = new THREE.SphereGeometry(PACMAN_BODY_RADIUS, 32, 32, 0, Math.PI * 2, 0, Math.PI);
-    const bodyMaterial = new THREE.MeshStandardMaterial({
+    const pacmanMaterial = new THREE.MeshStandardMaterial({
         color: 0xffff00,
         emissive: 0xffff00,
-        emissiveIntensity: 0.3
-    });
-
-    // Create PAC-MAN shape with mouth
-    const pacmanGeometry = new THREE.SphereGeometry(PACMAN_BODY_RADIUS, 32, 32);
-    const pacmanMesh = new THREE.Mesh(pacmanGeometry, bodyMaterial);
-
-    // Eye (single, creepy eye)
-    const eyeGeometry = new THREE.SphereGeometry(0.3, 16, 16);
-    const eyeWhiteMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
-    const eyePupilMaterial = new THREE.MeshStandardMaterial({
-        color: 0x000000,
-        emissive: 0xff0000,
-        emissiveIntensity: 0.5
-    });
-
-    const eyeWhite = new THREE.Mesh(eyeGeometry, eyeWhiteMaterial);
-    eyeWhite.position.set(0, 0.8, 1.2);
-
-    const eyePupil = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), eyePupilMaterial);
-    eyePupil.position.set(0, 0.8, 1.4);
-
-    // Mouth (wedge cut out)
-    const mouthGeometry = new THREE.ConeGeometry(PACMAN_MOUTH_RADIUS, PACMAN_MOUTH_HEIGHT, 32, 1, true, 0, Math.PI / 3);
-    const mouthMaterial = new THREE.MeshStandardMaterial({
-        color: 0x1a0000,
+        emissiveIntensity: 0.3,
+        roughness: 0.2,
+        metalness: 0.0,
         side: THREE.DoubleSide
     });
-    const mouth = new THREE.Mesh(mouthGeometry, mouthMaterial);
-    mouth.rotation.x = Math.PI / 2;
-    mouth.rotation.z = Math.PI;
-    mouth.position.set(0, 0, 0.5);
 
-    pacmanGroup.add(pacmanMesh);
-    pacmanGroup.add(eyeWhite);
-    pacmanGroup.add(eyePupil);
-    pacmanGroup.add(mouth);
+    // Top half (hemisphere)
+    const topGeometry = new THREE.SphereGeometry(PACMAN_BODY_RADIUS, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const topHalf = new THREE.Mesh(topGeometry, pacmanMaterial);
 
-    // Point light to make PAC-MAN glow ominously
-    const pacmanLight = new THREE.PointLight(0xffff00, 1, 15);
+    // Eyes
+    const eyeGeometry = new THREE.SphereGeometry(0.15, 16, 16);
+    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
+
+    const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    leftEye.position.set(-0.6, 0.8, 1.0);
+    topHalf.add(leftEye);
+
+    const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    rightEye.position.set(0.6, 0.8, 1.0);
+    topHalf.add(rightEye);
+
+    // Bottom half (hemisphere)
+    const bottomGeometry = new THREE.SphereGeometry(PACMAN_BODY_RADIUS, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
+    const bottomHalf = new THREE.Mesh(bottomGeometry, pacmanMaterial);
+
+    pacmanGroup.add(topHalf);
+    pacmanGroup.add(bottomHalf);
+
+    // Point light to make PAC-MAN glow
+    const pacmanLight = new THREE.PointLight(0xffff00, 1, 10);
     pacmanLight.position.set(0, 0, 0);
     pacmanGroup.add(pacmanLight);
 
@@ -655,6 +642,8 @@ function createPacman() {
 
     pacman = {
         mesh: pacmanGroup,
+        topHalf: topHalf,
+        bottomHalf: bottomHalf,
         x: 10,
         z: 15,
         targetX: 10,
@@ -1006,7 +995,7 @@ function updateMusicIntensity() {
 
     if (dist < intensityThreshold) {
         musicIntensity = Math.max(0, 1 - dist / intensityThreshold);
-        intenseMusicActive = dist < 10; // Full intensity when very close
+        intenseMusicActive = true; // Sync with warning message
     } else {
         musicIntensity = 0;
         intenseMusicActive = false;
@@ -1244,7 +1233,16 @@ function pushPlayerOutOfWalls() {
 
 function updatePacman(delta) {
     // Animate mouth
-    pacman.mouthOpen = (Math.sin(Date.now() * 0.01) + 1) / 2;
+    const mouthSpeed = 15;
+    pacman.mouthOpen = (Math.sin(Date.now() * 0.01 * mouthSpeed) + 1) / 2;
+
+    const maxMouthAngle = Math.PI / 4;
+    const currentAngle = pacman.mouthOpen * maxMouthAngle;
+
+    if (pacman.topHalf && pacman.bottomHalf) {
+        pacman.topHalf.rotation.x = -currentAngle;
+        pacman.bottomHalf.rotation.x = currentAngle;
+    }
 
     // Move towards target
     const targetWorldX = pacman.targetX * CELL_SIZE + CELL_SIZE / 2;
@@ -1283,6 +1281,12 @@ function updatePacman(delta) {
             gameState.pacmanPowered = false;
             document.getElementById('pacman-power').textContent = 'NORMAL';
             document.getElementById('pacman-power').style.color = '#fff';
+
+            // Reset PAC-MAN appearance
+            if (pacman.topHalf && pacman.bottomHalf) {
+                pacman.topHalf.material.emissiveIntensity = 0.3;
+                pacman.bottomHalf.material.emissiveIntensity = 0.3;
+            }
         }
     }
 }
@@ -1404,7 +1408,10 @@ function eatPowerPellets() {
             document.getElementById('pacman-power').style.color = '#f00';
 
             // Make PAC-MAN scarier
-            pacman.mesh.children[0].material.emissiveIntensity = 1;
+            if (pacman.topHalf && pacman.bottomHalf) {
+                pacman.topHalf.material.emissiveIntensity = 1;
+                pacman.bottomHalf.material.emissiveIntensity = 1;
+            }
         }
     });
 }
