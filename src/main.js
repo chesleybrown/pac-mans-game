@@ -73,8 +73,10 @@ const moveState = {
 // Clock for delta time
 const clock = new THREE.Clock();
 
-// Audio context for horror sounds
-let audioContext;
+// PAC-MAN geometry constants
+const PACMAN_BODY_RADIUS = 1.5;
+const PACMAN_MOUTH_RADIUS = 1.6;
+const PACMAN_MOUTH_HEIGHT = 2;
 
 function init() {
     // Scene
@@ -325,7 +327,7 @@ function createPacman() {
     const pacmanGroup = new THREE.Group();
     
     // Main body
-    const bodyGeometry = new THREE.SphereGeometry(1.5, 32, 32, 0, Math.PI * 2, 0, Math.PI);
+    const bodyGeometry = new THREE.SphereGeometry(PACMAN_BODY_RADIUS, 32, 32, 0, Math.PI * 2, 0, Math.PI);
     const bodyMaterial = new THREE.MeshStandardMaterial({
         color: 0xffff00,
         emissive: 0xffff00,
@@ -333,7 +335,7 @@ function createPacman() {
     });
     
     // Create PAC-MAN shape with mouth
-    const pacmanGeometry = new THREE.SphereGeometry(1.5, 32, 32);
+    const pacmanGeometry = new THREE.SphereGeometry(PACMAN_BODY_RADIUS, 32, 32);
     const pacmanMesh = new THREE.Mesh(pacmanGeometry, bodyMaterial);
     
     // Eye (single, creepy eye)
@@ -352,7 +354,7 @@ function createPacman() {
     eyePupil.position.set(0, 0.8, 1.4);
     
     // Mouth (wedge cut out)
-    const mouthGeometry = new THREE.ConeGeometry(1.6, 2, 32, 1, true, 0, Math.PI / 3);
+    const mouthGeometry = new THREE.ConeGeometry(PACMAN_MOUTH_RADIUS, PACMAN_MOUTH_HEIGHT, 32, 1, true, 0, Math.PI / 3);
     const mouthMaterial = new THREE.MeshStandardMaterial({
         color: 0x1a0000,
         side: THREE.DoubleSide
@@ -482,17 +484,6 @@ function setupEventListeners() {
     // Start button
     document.getElementById('start-button').addEventListener('click', startGame);
     
-    // Pointer lock
-    controls.addEventListener('lock', () => {
-        if (!gameState.started) return;
-    });
-    
-    controls.addEventListener('unlock', () => {
-        if (gameState.started && !gameState.over) {
-            // Prompt to re-lock
-        }
-    });
-    
     // Keyboard
     document.addEventListener('keydown', (e) => {
         if (!gameState.started || gameState.over) return;
@@ -546,9 +537,6 @@ function startGame() {
     document.getElementById('start-screen').style.display = 'none';
     gameState.started = true;
     controls.lock();
-    
-    // Initialize audio context on user interaction
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
 }
 
 function guideNearestGhost() {
