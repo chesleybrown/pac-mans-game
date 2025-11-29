@@ -200,8 +200,9 @@
         <h1>PAC-MAN'S GAME</h1>
         <p>In this twisted nightmare, <span class="highlight">PAC-MAN is the predator</span>.</p>
         <p>The ghosts are helpless. They need YOU to save them.</p>
-        <p>Guide the ghosts to safety before PAC-MAN devours them all.</p>
-        <p><strong>Controls:</strong> WASD to move, Mouse to look, Click near ghosts to guide them</p>
+        <p>Touch ghosts to collect them, then bring them back to the green safe zone!</p>
+        <p><strong>Warning:</strong> If PAC-MAN touches you, it's game over!</p>
+        <p><strong>Controls:</strong> WASD to move, Mouse to look, Click to collect ghosts</p>
         <button id="start-button">ENTER THE MAZE</button>
     </div>
     
@@ -209,11 +210,12 @@
         <div id="hud">
             <div>Ghosts Saved: <span id="ghosts-saved">0</span> / <span id="total-ghosts">4</span></div>
             <div>Ghosts Remaining: <span id="ghosts-alive">4</span></div>
+            <div>Carrying: <span id="ghosts-collected">None</span></div>
             <div>PAC-MAN Power: <span id="pacman-power">NORMAL</span></div>
         </div>
         <div id="crosshair"></div>
         <div id="instructions">
-            WASD - Move | Mouse - Look | Click - Guide Ghost | Shift - Run
+            WASD - Move | Mouse - Look | Click - Collect Ghost | Shift - Run | Return to green zone to save!
         </div>
     </div>
     

@@ -9,8 +9,12 @@ const gameState = {
     ghostsAlive: 4,
     totalGhosts: 4,
     pacmanPowered: false,
-    powerTimer: 0
+    powerTimer: 0,
+    collectedGhosts: [] // Ghosts the player is carrying
 };
+
+// Player spawn position (also the safe zone for delivering ghosts)
+const PLAYER_SPAWN = { x: 1, z: 19 };
 
 // Constants
 const CELL_SIZE = 4;
@@ -85,12 +89,12 @@ const PACMAN_MOUTH_HEIGHT = 2;
 function init() {
     // Scene
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0a0a);
-    scene.fog = new THREE.FogExp2(0x0a0a0a, 0.04);
+    scene.background = new THREE.Color(0x000000);
+    scene.fog = new THREE.FogExp2(0x000000, 0.08); // Darker, thicker fog
     
     // Camera (first-person) - Start in bottom-left corner, away from ghosts and PAC-MAN
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(1 * CELL_SIZE + CELL_SIZE / 2, PLAYER_HEIGHT, 19 * CELL_SIZE + CELL_SIZE / 2);
+    camera.position.set(PLAYER_SPAWN.x * CELL_SIZE + CELL_SIZE / 2, PLAYER_HEIGHT, PLAYER_SPAWN.z * CELL_SIZE + CELL_SIZE / 2);
     
     // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -126,41 +130,154 @@ function init() {
 }
 
 function setupLighting() {
-    // Dim ambient light for horror atmosphere
-    const ambientLight = new THREE.AmbientLight(0x111111);
+    // Very dim ambient light - flashlight is the main light source
+    const ambientLight = new THREE.AmbientLight(0x050505);
     scene.add(ambientLight);
     
-    // Eerie point lights
-    const eerieLight1 = new THREE.PointLight(0xff0000, 0.5, 50);
-    eerieLight1.position.set(5 * CELL_SIZE, 4, 5 * CELL_SIZE);
-    scene.add(eerieLight1);
-    
-    const eerieLight2 = new THREE.PointLight(0x0000ff, 0.5, 50);
-    eerieLight2.position.set(15 * CELL_SIZE, 4, 15 * CELL_SIZE);
-    scene.add(eerieLight2);
-    
-    // Player flashlight
-    const flashlight = new THREE.SpotLight(0xffffaa, 2, 30, Math.PI / 6, 0.5, 1);
+    // Player flashlight - more powerful, main light source
+    const flashlight = new THREE.SpotLight(0xffffee, 5, 50, Math.PI / 5, 0.3, 1);
     flashlight.position.set(0, 0, 0);
     flashlight.target.position.set(0, 0, -1);
+    flashlight.castShadow = true;
     camera.add(flashlight);
     camera.add(flashlight.target);
     scene.add(camera);
 }
 
 function createMaze() {
-    // Neon blue walls like classic PAC-MAN
+    // Seeded random for consistent textures
+    let seed = 12345;
+    const seededRandom = () => {
+        seed = (seed * 9301 + 49297) % 233280;
+        return seed / 233280;
+    };
+    
+    // Create horror-style wall texture with blood splatters and claw marks
+    const wallCanvas = document.createElement('canvas');
+    wallCanvas.width = 256;
+    wallCanvas.height = 256;
+    const wallCtx = wallCanvas.getContext('2d');
+    
+    // Base neon blue color
+    wallCtx.fillStyle = '#0033aa';
+    wallCtx.fillRect(0, 0, 256, 256);
+    
+    // Add grid lines for retro look
+    wallCtx.strokeStyle = '#0055ff';
+    wallCtx.lineWidth = 2;
+    for (let i = 0; i < 256; i += 32) {
+        wallCtx.beginPath();
+        wallCtx.moveTo(i, 0);
+        wallCtx.lineTo(i, 256);
+        wallCtx.stroke();
+        wallCtx.beginPath();
+        wallCtx.moveTo(0, i);
+        wallCtx.lineTo(256, i);
+        wallCtx.stroke();
+    }
+    
+    // Add blood splatters (deterministic positions)
+    wallCtx.fillStyle = '#8b0000';
+    for (let i = 0; i < 5; i++) {
+        const x = seededRandom() * 256;
+        const y = seededRandom() * 256;
+        const radius = 10 + seededRandom() * 20;
+        wallCtx.beginPath();
+        wallCtx.arc(x, y, radius, 0, Math.PI * 2);
+        wallCtx.fill();
+        // Drips
+        for (let j = 0; j < 3; j++) {
+            wallCtx.fillRect(x - 2 + seededRandom() * 4, y, 3, 20 + seededRandom() * 40);
+        }
+    }
+    
+    // Add claw marks (deterministic positions)
+    wallCtx.strokeStyle = '#330000';
+    wallCtx.lineWidth = 3;
+    for (let i = 0; i < 3; i++) {
+        const x = 50 + seededRandom() * 150;
+        const y = 50 + seededRandom() * 100;
+        for (let j = 0; j < 3; j++) {
+            wallCtx.beginPath();
+            wallCtx.moveTo(x + j * 15, y);
+            wallCtx.lineTo(x + j * 15 + 10, y + 60);
+            wallCtx.stroke();
+        }
+    }
+    
+    const wallTexture = new THREE.CanvasTexture(wallCanvas);
+    wallTexture.wrapS = THREE.RepeatWrapping;
+    wallTexture.wrapT = THREE.RepeatWrapping;
+    
     const wallMaterial = new THREE.MeshStandardMaterial({
-        color: 0x0033ff,
-        emissive: 0x0011aa,
-        emissiveIntensity: 0.3,
-        roughness: 0.7,
-        metalness: 0.3
+        map: wallTexture,
+        emissive: 0x001166,
+        emissiveIntensity: 0.2,
+        roughness: 0.8,
+        metalness: 0.2
     });
     
+    // Create horror floor texture
+    const floorCanvas = document.createElement('canvas');
+    floorCanvas.width = 512;
+    floorCanvas.height = 512;
+    const floorCtx = floorCanvas.getContext('2d');
+    
+    // Dark base
+    floorCtx.fillStyle = '#0a0a15';
+    floorCtx.fillRect(0, 0, 512, 512);
+    
+    // Tile pattern
+    floorCtx.strokeStyle = '#151525';
+    floorCtx.lineWidth = 2;
+    for (let i = 0; i < 512; i += 64) {
+        floorCtx.beginPath();
+        floorCtx.moveTo(i, 0);
+        floorCtx.lineTo(i, 512);
+        floorCtx.stroke();
+        floorCtx.beginPath();
+        floorCtx.moveTo(0, i);
+        floorCtx.lineTo(512, i);
+        floorCtx.stroke();
+    }
+    
+    // Blood pools (deterministic positions)
+    floorCtx.fillStyle = '#3a0000';
+    for (let i = 0; i < 8; i++) {
+        const x = seededRandom() * 512;
+        const y = seededRandom() * 512;
+        floorCtx.beginPath();
+        floorCtx.ellipse(x, y, 30 + seededRandom() * 40, 20 + seededRandom() * 30, seededRandom() * Math.PI, 0, Math.PI * 2);
+        floorCtx.fill();
+    }
+    
+    // Skull symbols (deterministic positions)
+    floorCtx.fillStyle = '#1a1a2a';
+    for (let i = 0; i < 4; i++) {
+        const x = 100 + seededRandom() * 300;
+        const y = 100 + seededRandom() * 300;
+        // Simple skull shape
+        floorCtx.beginPath();
+        floorCtx.arc(x, y, 20, 0, Math.PI * 2);
+        floorCtx.fill();
+        floorCtx.fillRect(x - 10, y + 15, 20, 15);
+        // Eye sockets
+        floorCtx.fillStyle = '#0a0a15';
+        floorCtx.beginPath();
+        floorCtx.arc(x - 7, y - 3, 5, 0, Math.PI * 2);
+        floorCtx.arc(x + 7, y - 3, 5, 0, Math.PI * 2);
+        floorCtx.fill();
+        floorCtx.fillStyle = '#1a1a2a';
+    }
+    
+    const floorTexture = new THREE.CanvasTexture(floorCanvas);
+    floorTexture.wrapS = THREE.RepeatWrapping;
+    floorTexture.wrapT = THREE.RepeatWrapping;
+    floorTexture.repeat.set(4, 4);
+    
     const floorMaterial = new THREE.MeshStandardMaterial({
-        color: 0x0f0f1a,
-        roughness: 1,
+        map: floorTexture,
+        roughness: 0.9,
         metalness: 0
     });
     
@@ -176,12 +293,13 @@ function createMaze() {
         emissiveIntensity: 1
     });
     
+    // Safe zone is at player spawn position
     const safeMaterial = new THREE.MeshStandardMaterial({
         color: 0x00ff00,
         emissive: 0x00ff00,
-        emissiveIntensity: 0.3,
+        emissiveIntensity: 0.5,
         transparent: true,
-        opacity: 0.3
+        opacity: 0.4
     });
     
     // Floor
@@ -192,9 +310,27 @@ function createMaze() {
     floor.receiveShadow = true;
     scene.add(floor);
     
-    // Ceiling
+    // Ceiling with horror texture
+    const ceilingCanvas = document.createElement('canvas');
+    ceilingCanvas.width = 256;
+    ceilingCanvas.height = 256;
+    const ceilingCtx = ceilingCanvas.getContext('2d');
+    ceilingCtx.fillStyle = '#050508';
+    ceilingCtx.fillRect(0, 0, 256, 256);
+    // Add some dripping effects (deterministic positions)
+    ceilingCtx.fillStyle = '#200000';
+    for (let i = 0; i < 10; i++) {
+        const x = seededRandom() * 256;
+        ceilingCtx.fillRect(x, 0, 2, 30 + seededRandom() * 50);
+    }
+    
+    const ceilingTexture = new THREE.CanvasTexture(ceilingCanvas);
+    ceilingTexture.wrapS = THREE.RepeatWrapping;
+    ceilingTexture.wrapT = THREE.RepeatWrapping;
+    ceilingTexture.repeat.set(8, 8);
+    
     const ceilingMaterial = new THREE.MeshStandardMaterial({
-        color: 0x050510,
+        map: ceilingTexture,
         roughness: 1
     });
     const ceiling = new THREE.Mesh(floorGeometry, ceilingMaterial);
@@ -206,7 +342,26 @@ function createMaze() {
     const wallGeometry = new THREE.BoxGeometry(CELL_SIZE, WALL_HEIGHT, CELL_SIZE);
     const dotGeometry = new THREE.SphereGeometry(0.15, 8, 8);
     const powerPelletGeometry = new THREE.SphereGeometry(0.4, 16, 16);
-    const safeZoneGeometry = new THREE.BoxGeometry(CELL_SIZE * 0.8, 0.1, CELL_SIZE * 0.8);
+    const safeZoneGeometry = new THREE.BoxGeometry(CELL_SIZE * 2, 0.1, CELL_SIZE * 2);
+    
+    // Add safe zone at player spawn location
+    const safeZone = new THREE.Mesh(safeZoneGeometry, safeMaterial);
+    safeZone.position.set(PLAYER_SPAWN.x * CELL_SIZE + CELL_SIZE / 2, 0.1, PLAYER_SPAWN.z * CELL_SIZE + CELL_SIZE / 2);
+    scene.add(safeZone);
+    safeZones.push({ mesh: safeZone, x: PLAYER_SPAWN.x, z: PLAYER_SPAWN.z });
+    
+    // Add a glowing pillar to mark the safe zone
+    const pillarGeometry = new THREE.CylinderGeometry(0.3, 0.3, WALL_HEIGHT, 16);
+    const pillarMaterial = new THREE.MeshStandardMaterial({
+        color: 0x00ff00,
+        emissive: 0x00ff00,
+        emissiveIntensity: 0.8,
+        transparent: true,
+        opacity: 0.6
+    });
+    const pillar = new THREE.Mesh(pillarGeometry, pillarMaterial);
+    pillar.position.set(PLAYER_SPAWN.x * CELL_SIZE + CELL_SIZE / 2, WALL_HEIGHT / 2, PLAYER_SPAWN.z * CELL_SIZE + CELL_SIZE / 2);
+    scene.add(pillar);
     
     for (let z = 0; z < MAZE_HEIGHT; z++) {
         for (let x = 0; x < MAZE_WIDTH; x++) {
@@ -242,22 +397,17 @@ function createMaze() {
                 pellet.position.set(posX, 1, posZ);
                 scene.add(pellet);
                 powerPellets.push({ mesh: pellet, x: x, z: z, eaten: false });
-            } else if (cell === 4) {
-                // Safe zone for ghosts
-                const safeZone = new THREE.Mesh(safeZoneGeometry, safeMaterial);
-                safeZone.position.set(posX, 0.1, posZ);
-                scene.add(safeZone);
-                safeZones.push({ mesh: safeZone, x: x, z: z });
             }
+            // Note: cell === 4 (old safe zones in ghost house) are now just empty paths
         }
     }
 }
 
 function createPlayerBody() {
-    // Create hands
+    // Create hands with beige skin color
     const handMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0xdeb887,
-        roughness: 0.7
+        color: 0xf5deb3, // Beige/wheat skin tone
+        roughness: 0.6
     });
     
     const handGeometry = new THREE.BoxGeometry(0.15, 0.08, 0.3);
@@ -488,6 +638,7 @@ function createGhosts() {
             direction: { x: 0, z: 0 },
             alive: true,
             saved: false,
+            collected: false, // Player has collected this ghost
             guideTarget: null,
             speed: GHOST_SPEED,
             scatterTarget: scatterTargets[index] // Unique escape direction
@@ -530,7 +681,7 @@ function setupEventListeners() {
         }
     });
     
-    // Click to guide ghosts
+    // Click to collect ghosts (removed - now automatic on proximity)
     document.addEventListener('click', () => {
         if (!gameState.started || gameState.over) return;
         
@@ -539,7 +690,8 @@ function setupEventListeners() {
             return;
         }
         
-        guideNearestGhost();
+        // Try to collect a nearby ghost
+        collectNearestGhost();
     });
     
     // Window resize
@@ -701,49 +853,78 @@ function startGame() {
     initAudio();
 }
 
-function guideNearestGhost() {
-    // Find nearest alive ghost and set a guide target for it
+function collectNearestGhost() {
+    // Player touches a ghost to collect it
     const playerPos = camera.position;
-    let nearestGhost = null;
-    let nearestDist = Infinity;
     
     ghosts.forEach(ghost => {
-        if (!ghost.alive || ghost.saved) return;
+        if (!ghost.alive || ghost.saved || ghost.collected) return;
         
         const dist = playerPos.distanceTo(ghost.mesh.position);
-        if (dist < nearestDist && dist < 10) { // Only guide ghosts within 10 units
-            nearestDist = dist;
-            nearestGhost = ghost;
+        if (dist < 3) { // Close enough to collect
+            // Collect the ghost
+            ghost.collected = true;
+            gameState.collectedGhosts.push(ghost);
+            
+            // Hide the ghost (it's now following the player)
+            ghost.mesh.visible = false;
+            
+            // Play collect sound
+            playSound('save');
+            
+            // Update HUD
+            updateCollectedGhostsHUD();
         }
     });
+}
+
+function updateCollectedGhostsHUD() {
+    const collectedEl = document.getElementById('ghosts-collected');
+    if (collectedEl) {
+        const ghostNames = gameState.collectedGhosts.map(g => g.name).join(', ');
+        collectedEl.textContent = gameState.collectedGhosts.length > 0 ? ghostNames : 'None';
+    }
+}
+
+function checkPlayerAtSafeZone() {
+    // Check if player is at the safe zone (player spawn)
+    const playerCellX = Math.floor(camera.position.x / CELL_SIZE);
+    const playerCellZ = Math.floor(camera.position.z / CELL_SIZE);
     
-    if (nearestGhost) {
-        // Find nearest safe zone
-        let nearestSafe = null;
-        let nearestSafeDist = Infinity;
-        
-        safeZones.forEach(zone => {
-            const dist = nearestGhost.mesh.position.distanceTo(
-                new THREE.Vector3(zone.x * CELL_SIZE + CELL_SIZE / 2, 0, zone.z * CELL_SIZE + CELL_SIZE / 2)
-            );
-            if (dist < nearestSafeDist) {
-                nearestSafeDist = dist;
-                nearestSafe = zone;
-            }
-        });
-        
-        if (nearestSafe) {
-            nearestGhost.guideTarget = nearestSafe;
-            nearestGhost.fleeing = true;
+    if (playerCellX === PLAYER_SPAWN.x && playerCellZ === PLAYER_SPAWN.z) {
+        // Deliver all collected ghosts
+        if (gameState.collectedGhosts.length > 0) {
+            gameState.collectedGhosts.forEach(ghost => {
+                ghost.saved = true;
+                gameState.ghostsSaved++;
+                scene.remove(ghost.mesh);
+            });
             
-            // Visual feedback
-            const flashMaterial = nearestGhost.mesh.children[0].material.clone();
-            flashMaterial.emissiveIntensity = 1;
-            nearestGhost.mesh.children[0].material = flashMaterial;
-            setTimeout(() => {
-                flashMaterial.emissiveIntensity = 0.3;
-            }, 200);
+            // Play save sound
+            playSound('powerUp');
+            
+            // Clear collected ghosts
+            gameState.collectedGhosts = [];
+            
+            // Update HUD
+            document.getElementById('ghosts-saved').textContent = gameState.ghostsSaved;
+            updateCollectedGhostsHUD();
+            
+            // Check for win
+            if (gameState.ghostsSaved === gameState.totalGhosts) {
+                endGame(true);
+            }
         }
+    }
+}
+
+function checkPlayerPacmanCollision() {
+    // Player dies if they touch PAC-MAN
+    const dist = camera.position.distanceTo(pacman.mesh.position);
+    if (dist < 2.5) {
+        // Player caught by PAC-MAN!
+        playSound('ghostEaten');
+        endGame(false, true); // true = killed by pacman
     }
 }
 
@@ -1008,7 +1189,7 @@ function eatPowerPellets() {
 
 function checkPacmanGhostCollision() {
     ghosts.forEach(ghost => {
-        if (!ghost.alive || ghost.saved) return;
+        if (!ghost.alive || ghost.saved || ghost.collected) return;
         
         const dist = pacman.mesh.position.distanceTo(ghost.mesh.position);
         if (dist < 2) {
@@ -1021,8 +1202,9 @@ function checkPacmanGhostCollision() {
             // Play ghost eaten sound
             playSound('ghostEaten');
             
-            // Check for game over
-            if (gameState.ghostsAlive === 0) {
+            // Check for game over (all ghosts dead and none collected)
+            const remainingGhosts = ghosts.filter(g => g.alive && !g.saved && !g.collected).length;
+            if (remainingGhosts === 0 && gameState.collectedGhosts.length === 0) {
                 endGame(false);
             }
         }
@@ -1031,60 +1213,24 @@ function checkPacmanGhostCollision() {
 
 function updateGhosts(delta) {
     ghosts.forEach(ghost => {
-        if (!ghost.alive || ghost.saved) return;
-        
-        // Check if in safe zone
-        const inSafeZone = safeZones.some(zone => 
-            zone.x === Math.floor(ghost.mesh.position.x / CELL_SIZE) &&
-            zone.z === Math.floor(ghost.mesh.position.z / CELL_SIZE)
-        );
-        
-        if (inSafeZone && ghost.guideTarget) {
-            // Ghost is saved!
-            ghost.saved = true;
-            gameState.ghostsSaved++;
-            document.getElementById('ghosts-saved').textContent = gameState.ghostsSaved;
-            
-            // Play save sound
-            playSound('save');
-            
-            // Visual effect
-            ghost.mesh.children.forEach(child => {
-                if (child.material) {
-                    child.material.emissive = new THREE.Color(0x00ff00);
-                    child.material.emissiveIntensity = 1;
-                }
-            });
-            
-            // Check for win
-            if (gameState.ghostsSaved === gameState.totalGhosts) {
-                endGame(true);
-            }
-            return;
-        }
+        if (!ghost.alive || ghost.saved || ghost.collected) return;
         
         // Movement logic - ghosts are always trying to escape PAC-MAN
         let targetX, targetZ;
         
-        if (ghost.guideTarget) {
-            // Move towards guide target (safe zone) - player guided
-            targetX = ghost.guideTarget.x;
-            targetZ = ghost.guideTarget.z;
+        // Flee from PAC-MAN using unique scatter patterns
+        const distToPacman = Math.abs(ghost.x - pacman.x) + Math.abs(ghost.z - pacman.z);
+        
+        if (distToPacman < 8) {
+            // PAC-MAN is close - flee directly away
+            const awayX = ghost.x + (ghost.x - pacman.x) * 2;
+            const awayZ = ghost.z + (ghost.z - pacman.z) * 2;
+            targetX = Math.max(1, Math.min(MAZE_WIDTH - 2, awayX));
+            targetZ = Math.max(1, Math.min(MAZE_HEIGHT - 2, awayZ));
         } else {
-            // Flee from PAC-MAN using unique scatter patterns
-            const distToPacman = Math.abs(ghost.x - pacman.x) + Math.abs(ghost.z - pacman.z);
-            
-            if (distToPacman < 8) {
-                // PAC-MAN is close - flee directly away
-                const awayX = ghost.x + (ghost.x - pacman.x) * 2;
-                const awayZ = ghost.z + (ghost.z - pacman.z) * 2;
-                targetX = Math.max(1, Math.min(MAZE_WIDTH - 2, awayX));
-                targetZ = Math.max(1, Math.min(MAZE_HEIGHT - 2, awayZ));
-            } else {
-                // Move towards scatter target (unique corner for each ghost)
-                targetX = ghost.scatterTarget.x;
-                targetZ = ghost.scatterTarget.z;
-            }
+            // Move towards scatter target (unique corner for each ghost)
+            targetX = ghost.scatterTarget.x;
+            targetZ = ghost.scatterTarget.z;
         }
         
         // Simple pathfinding
@@ -1155,7 +1301,7 @@ function updateWarning() {
     }
 }
 
-function endGame(won) {
+function endGame(won, killedByPacman = false) {
     gameState.over = true;
     controls.unlock();
     
@@ -1169,7 +1315,12 @@ function endGame(won) {
         gameOverEl.classList.add('win');
         gameOverEl.classList.remove('lose');
         titleEl.textContent = 'YOU SAVED THEM ALL!';
-        messageEl.textContent = `All ${gameState.totalGhosts} ghosts have been guided to safety.`;
+        messageEl.textContent = `All ${gameState.totalGhosts} ghosts have been safely delivered!`;
+    } else if (killedByPacman) {
+        gameOverEl.classList.add('lose');
+        gameOverEl.classList.remove('win');
+        titleEl.textContent = 'YOU WERE DEVOURED!';
+        messageEl.textContent = `PAC-MAN caught you! You saved ${gameState.ghostsSaved} of ${gameState.totalGhosts} ghosts.`;
     } else {
         gameOverEl.classList.add('lose');
         gameOverEl.classList.remove('win');
@@ -1192,6 +1343,8 @@ function animate() {
     updatePacman(delta);
     updateGhosts(delta);
     updateWarning();
+    checkPlayerPacmanCollision();
+    checkPlayerAtSafeZone();
     
     renderer.render(scene, camera);
 }
