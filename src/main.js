@@ -24,7 +24,6 @@ const GHOST_FLEE_SPEED = 5;
 
 // Audio
 let audioContext;
-let backgroundMusic;
 let soundEffects = {};
 
 // Classic PAC-MAN maze layout (1 = wall, 0 = path, 2 = dot, 3 = power pellet, 4 = safe zone)
@@ -489,7 +488,6 @@ function createGhosts() {
             direction: { x: 0, z: 0 },
             alive: true,
             saved: false,
-            fleeing: true, // Ghosts start fleeing from PAC-MAN
             guideTarget: null,
             speed: GHOST_SPEED,
             scatterTarget: scatterTargets[index] // Unique escape direction
@@ -1044,7 +1042,6 @@ function updateGhosts(delta) {
         if (inSafeZone && ghost.guideTarget) {
             // Ghost is saved!
             ghost.saved = true;
-            ghost.fleeing = false;
             gameState.ghostsSaved++;
             document.getElementById('ghosts-saved').textContent = gameState.ghostsSaved;
             
