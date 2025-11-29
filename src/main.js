@@ -16,11 +16,16 @@ const gameState = {
 const CELL_SIZE = 4;
 const WALL_HEIGHT = 5;
 const PLAYER_HEIGHT = 1.7;
-const PLAYER_SPEED = 8;
-const PLAYER_RUN_SPEED = 14;
+const PLAYER_SPEED = 4;
+const PLAYER_RUN_SPEED = 7;
 const PACMAN_SPEED = 5;
 const GHOST_SPEED = 3;
 const GHOST_FLEE_SPEED = 5;
+
+// Audio
+let audioContext;
+let backgroundMusic;
+let soundEffects = {};
 
 // Classic PAC-MAN maze layout (1 = wall, 0 = path, 2 = dot, 3 = power pellet, 4 = safe zone)
 const MAZE_LAYOUT = [
@@ -84,9 +89,9 @@ function init() {
     scene.background = new THREE.Color(0x0a0a0a);
     scene.fog = new THREE.FogExp2(0x0a0a0a, 0.04);
     
-    // Camera (first-person)
+    // Camera (first-person) - Start in bottom-left corner, away from ghosts and PAC-MAN
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(10 * CELL_SIZE, PLAYER_HEIGHT, 10 * CELL_SIZE);
+    camera.position.set(1 * CELL_SIZE + CELL_SIZE / 2, PLAYER_HEIGHT, 19 * CELL_SIZE + CELL_SIZE / 2);
     
     // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -145,10 +150,13 @@ function setupLighting() {
 }
 
 function createMaze() {
+    // Neon blue walls like classic PAC-MAN
     const wallMaterial = new THREE.MeshStandardMaterial({
-        color: 0x1a1a2e,
-        roughness: 0.9,
-        metalness: 0.1
+        color: 0x0033ff,
+        emissive: 0x0011aa,
+        emissiveIntensity: 0.3,
+        roughness: 0.7,
+        metalness: 0.3
     });
     
     const floorMaterial = new THREE.MeshStandardMaterial({
@@ -374,14 +382,15 @@ function createPacman() {
     pacmanLight.position.set(0, 0, 0);
     pacmanGroup.add(pacmanLight);
     
-    pacmanGroup.position.set(10 * CELL_SIZE + CELL_SIZE / 2, 1.5, 9 * CELL_SIZE + CELL_SIZE / 2);
+    // PAC-MAN starts at classic position (bottom center, below ghost house)
+    pacmanGroup.position.set(10 * CELL_SIZE + CELL_SIZE / 2, 1.5, 15 * CELL_SIZE + CELL_SIZE / 2);
     
     pacman = {
         mesh: pacmanGroup,
         x: 10,
-        z: 9,
+        z: 15,
         targetX: 10,
-        targetZ: 9,
+        targetZ: 15,
         direction: { x: 1, z: 0 },
         mouthOpen: 0,
         speed: PACMAN_SPEED
@@ -393,11 +402,20 @@ function createPacman() {
 function createGhosts() {
     const ghostColors = [0xff0000, 0x00ffff, 0xffb8ff, 0xffb852]; // Blinky, Inky, Pinky, Clyde
     const ghostNames = ['Blinky', 'Inky', 'Pinky', 'Clyde'];
+    // Ghost house positions (center of maze, in the safe zone area)
     const startPositions = [
-        { x: 9, z: 9 },
-        { x: 10, z: 9 },
-        { x: 11, z: 9 },
-        { x: 10, z: 10 }
+        { x: 9, z: 9 },   // Blinky - left side of ghost house
+        { x: 11, z: 9 },  // Inky - right side of ghost house
+        { x: 10, z: 9 },  // Pinky - center of ghost house
+        { x: 10, z: 10 }  // Clyde - below center
+    ];
+    
+    // Unique movement patterns for each ghost (scatter targets when fleeing)
+    const scatterTargets = [
+        { x: 19, z: 1 },  // Blinky - top right corner
+        { x: 1, z: 19 },  // Inky - bottom left corner
+        { x: 1, z: 1 },   // Pinky - top left corner
+        { x: 19, z: 19 }  // Clyde - bottom right corner
     ];
     
     ghostColors.forEach((color, index) => {
@@ -471,9 +489,10 @@ function createGhosts() {
             direction: { x: 0, z: 0 },
             alive: true,
             saved: false,
-            fleeing: false,
+            fleeing: true, // Ghosts start fleeing from PAC-MAN
             guideTarget: null,
-            speed: GHOST_SPEED
+            speed: GHOST_SPEED,
+            scatterTarget: scatterTargets[index] // Unique escape direction
         });
         
         scene.add(ghostGroup);
@@ -533,10 +552,155 @@ function setupEventListeners() {
     });
 }
 
+// Audio system using Web Audio API for retro sounds
+function initAudio() {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Create retro sound effects
+    soundEffects = {
+        wakawaka: createWakaWakaSound(),
+        powerUp: createPowerUpSound(),
+        ghostEaten: createGhostEatenSound(),
+        save: createSaveSound(),
+        warning: createWarningSound()
+    };
+    
+    // Start background music
+    startBackgroundMusic();
+}
+
+function createOscillator(frequency, type, duration, startTime) {
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    
+    osc.type = type;
+    osc.frequency.setValueAtTime(frequency, startTime);
+    osc.connect(gain);
+    gain.connect(audioContext.destination);
+    
+    gain.gain.setValueAtTime(0.1, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+    
+    return { osc, gain };
+}
+
+function createWakaWakaSound() {
+    return () => {
+        if (!audioContext) return;
+        const now = audioContext.currentTime;
+        const { osc, gain } = createOscillator(300, 'square', 0.1, now);
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.setValueAtTime(400, now + 0.05);
+        osc.start(now);
+        osc.stop(now + 0.1);
+    };
+}
+
+function createPowerUpSound() {
+    return () => {
+        if (!audioContext) return;
+        const now = audioContext.currentTime;
+        for (let i = 0; i < 4; i++) {
+            const { osc } = createOscillator(200 + i * 100, 'square', 0.15, now + i * 0.1);
+            osc.start(now + i * 0.1);
+            osc.stop(now + i * 0.1 + 0.15);
+        }
+    };
+}
+
+function createGhostEatenSound() {
+    return () => {
+        if (!audioContext) return;
+        const now = audioContext.currentTime;
+        const { osc } = createOscillator(800, 'sawtooth', 0.3, now);
+        osc.frequency.exponentialRampToValueAtTime(200, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+    };
+}
+
+function createSaveSound() {
+    return () => {
+        if (!audioContext) return;
+        const now = audioContext.currentTime;
+        // Happy ascending arpeggio
+        const notes = [261, 329, 392, 523]; // C, E, G, C
+        notes.forEach((freq, i) => {
+            const { osc } = createOscillator(freq, 'sine', 0.2, now + i * 0.1);
+            osc.start(now + i * 0.1);
+            osc.stop(now + i * 0.1 + 0.2);
+        });
+    };
+}
+
+function createWarningSound() {
+    return () => {
+        if (!audioContext) return;
+        const now = audioContext.currentTime;
+        const { osc } = createOscillator(150, 'sawtooth', 0.5, now);
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.setValueAtTime(100, now + 0.25);
+        osc.start(now);
+        osc.stop(now + 0.5);
+    };
+}
+
+function startBackgroundMusic() {
+    if (!audioContext) return;
+    
+    // Create a spooky ambient loop
+    const playLoop = () => {
+        if (!gameState.started || gameState.over) return;
+        
+        const now = audioContext.currentTime;
+        
+        // Bass drone
+        const bass = audioContext.createOscillator();
+        const bassGain = audioContext.createGain();
+        bass.type = 'sine';
+        bass.frequency.setValueAtTime(55, now); // Low A
+        bass.connect(bassGain);
+        bassGain.connect(audioContext.destination);
+        bassGain.gain.setValueAtTime(0.05, now);
+        bassGain.gain.exponentialRampToValueAtTime(0.01, now + 2);
+        bass.start(now);
+        bass.stop(now + 2);
+        
+        // Eerie melody notes (minor scale)
+        const melodyNotes = [220, 196, 175, 165, 147, 165, 175, 196];
+        melodyNotes.forEach((freq, i) => {
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, now + i * 0.25);
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            gain.gain.setValueAtTime(0.03, now + i * 0.25);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.25 + 0.2);
+            osc.start(now + i * 0.25);
+            osc.stop(now + i * 0.25 + 0.25);
+        });
+        
+        // Schedule next loop
+        setTimeout(playLoop, 2000);
+    };
+    
+    playLoop();
+}
+
+function playSound(soundName) {
+    if (soundEffects[soundName]) {
+        soundEffects[soundName]();
+    }
+}
+
 function startGame() {
     document.getElementById('start-screen').style.display = 'none';
     gameState.started = true;
     controls.lock();
+    
+    // Initialize audio on user interaction
+    initAudio();
 }
 
 function guideNearestGhost() {
@@ -598,10 +762,10 @@ function updatePlayer(delta) {
     direction.normalize();
     
     if (moveState.forward || moveState.backward) {
-        velocity.z -= direction.z * speed * delta * 50;
+        velocity.z += direction.z * speed * delta * 50;
     }
     if (moveState.left || moveState.right) {
-        velocity.x -= direction.x * speed * delta * 50;
+        velocity.x += direction.x * speed * delta * 50;
     }
     
     // Get movement direction in world space
@@ -818,6 +982,7 @@ function eatDots() {
         if (!dot.eaten && dot.x === pacman.x && dot.z === pacman.z) {
             dot.eaten = true;
             scene.remove(dot.mesh);
+            playSound('wakawaka');
         }
     });
 }
@@ -827,6 +992,9 @@ function eatPowerPellets() {
         if (!pellet.eaten && pellet.x === pacman.x && pellet.z === pacman.z) {
             pellet.eaten = true;
             scene.remove(pellet.mesh);
+            
+            // Play power up sound
+            playSound('powerUp');
             
             // Activate power mode
             gameState.pacmanPowered = true;
@@ -852,6 +1020,9 @@ function checkPacmanGhostCollision() {
             gameState.ghostsAlive--;
             document.getElementById('ghosts-alive').textContent = gameState.ghostsAlive;
             
+            // Play ghost eaten sound
+            playSound('ghostEaten');
+            
             // Check for game over
             if (gameState.ghostsAlive === 0) {
                 endGame(false);
@@ -870,12 +1041,15 @@ function updateGhosts(delta) {
             zone.z === Math.floor(ghost.mesh.position.z / CELL_SIZE)
         );
         
-        if (inSafeZone && ghost.fleeing) {
+        if (inSafeZone && ghost.guideTarget) {
             // Ghost is saved!
             ghost.saved = true;
             ghost.fleeing = false;
             gameState.ghostsSaved++;
             document.getElementById('ghosts-saved').textContent = gameState.ghostsSaved;
+            
+            // Play save sound
+            playSound('save');
             
             // Visual effect
             ghost.mesh.children.forEach(child => {
@@ -892,23 +1066,28 @@ function updateGhosts(delta) {
             return;
         }
         
-        // Movement logic
+        // Movement logic - ghosts are always trying to escape PAC-MAN
         let targetX, targetZ;
         
         if (ghost.guideTarget) {
-            // Move towards guide target (safe zone)
+            // Move towards guide target (safe zone) - player guided
             targetX = ghost.guideTarget.x;
             targetZ = ghost.guideTarget.z;
-        } else if (gameState.pacmanPowered) {
-            // Flee from PAC-MAN
-            const awayX = ghost.x + (ghost.x - pacman.x);
-            const awayZ = ghost.z + (ghost.z - pacman.z);
-            targetX = Math.max(0, Math.min(MAZE_WIDTH - 1, awayX));
-            targetZ = Math.max(0, Math.min(MAZE_HEIGHT - 1, awayZ));
         } else {
-            // Wander randomly
-            targetX = ghost.x + (Math.random() > 0.5 ? 1 : -1);
-            targetZ = ghost.z + (Math.random() > 0.5 ? 1 : -1);
+            // Flee from PAC-MAN using unique scatter patterns
+            const distToPacman = Math.abs(ghost.x - pacman.x) + Math.abs(ghost.z - pacman.z);
+            
+            if (distToPacman < 8) {
+                // PAC-MAN is close - flee directly away
+                const awayX = ghost.x + (ghost.x - pacman.x) * 2;
+                const awayZ = ghost.z + (ghost.z - pacman.z) * 2;
+                targetX = Math.max(1, Math.min(MAZE_WIDTH - 2, awayX));
+                targetZ = Math.max(1, Math.min(MAZE_HEIGHT - 2, awayZ));
+            } else {
+                // Move towards scatter target (unique corner for each ghost)
+                targetX = ghost.scatterTarget.x;
+                targetZ = ghost.scatterTarget.z;
+            }
         }
         
         // Simple pathfinding
@@ -938,7 +1117,7 @@ function updateGhosts(delta) {
         });
         
         if (bestDir) {
-            const speed = ghost.fleeing ? GHOST_FLEE_SPEED : GHOST_SPEED;
+            const speed = ghost.guideTarget ? GHOST_FLEE_SPEED : GHOST_SPEED;
             ghost.mesh.position.x += bestDir.x * speed * delta;
             ghost.mesh.position.z += bestDir.z * speed * delta;
             
@@ -958,6 +1137,8 @@ function updateGhosts(delta) {
     });
 }
 
+let lastWarningTime = 0;
+
 function updateWarning() {
     const warningEl = document.getElementById('pacman-warning');
     const dist = camera.position.distanceTo(pacman.mesh.position);
@@ -965,6 +1146,13 @@ function updateWarning() {
     if (dist < 15) {
         warningEl.style.display = 'block';
         warningEl.style.opacity = Math.max(0, 1 - dist / 15);
+        
+        // Play warning sound periodically
+        const now = Date.now();
+        if (dist < 10 && now - lastWarningTime > 2000) {
+            playSound('warning');
+            lastWarningTime = now;
+        }
     } else {
         warningEl.style.display = 'none';
     }
