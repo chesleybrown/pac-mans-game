@@ -28,6 +28,11 @@ const GHOST_TARGET_SNAP_DISTANCE = 0.5; // Distance at which ghosts snap to cell
 const REVERSE_MOVEMENT_PENALTY = 100; // Penalty for ghosts reversing direction
 const WALL_PUSH_BUFFER = 0.1; // Extra distance to push player away from walls
 
+// Slime trail constants
+const SLIME_TRAIL_INTERVAL = 0.15; // Time between slime drops (seconds)
+const SLIME_TRAIL_LIFETIME = 5; // How long slime lasts (seconds)
+const SLIME_TRAIL_SIZE = 0.3; // Base size of slime drops
+
 // Audio
 let audioContext;
 let soundEffects = {};
@@ -68,6 +73,7 @@ let dots = [];
 let powerPellets = [];
 let safeZones = [];
 let walls = [];
+let slimeTrails = []; // Ghost slime trail particles
 
 // Movement
 const velocity = new THREE.Vector3();
@@ -81,6 +87,10 @@ const moveState = {
 
 // Clock for delta time
 const clock = new THREE.Clock();
+
+// Music intensity tracking
+let musicIntensity = 0; // 0 = normal, 1 = max intensity
+let intenseMusicActive = false;
 
 // PAC-MAN geometry constants
 const PACMAN_BODY_RADIUS = 1.5;
@@ -694,7 +704,8 @@ function createGhosts() {
             collected: false, // Player has collected this ghost
             guideTarget: null,
             speed: GHOST_SPEED,
-            scatterTarget: scatterTargets[index] // Unique escape direction
+            scatterTarget: scatterTargets[index], // Unique escape direction
+            lastSlimeTime: 0 // Timer for slime trail
         });
         
         scene.add(ghostGroup);
@@ -843,44 +854,94 @@ function createWarningSound() {
 function startBackgroundMusic() {
     if (!audioContext) return;
     
-    // Create a spooky ambient loop
+    // Create a spooky ambient loop with intensity variations
     const playLoop = () => {
         if (!gameState.started || gameState.over) return;
         
         const now = audioContext.currentTime;
         
-        // Bass drone
+        // Calculate intensity based on distance to PAC-MAN
+        const baseVolume = 0.05 + musicIntensity * 0.1;
+        const tempo = intenseMusicActive ? 0.15 : 0.25; // Faster when near PAC-MAN
+        
+        // Bass drone - louder and lower when intense
         const bass = audioContext.createOscillator();
         const bassGain = audioContext.createGain();
         bass.type = 'sine';
-        bass.frequency.setValueAtTime(55, now); // Low A
+        bass.frequency.setValueAtTime(intenseMusicActive ? 45 : 55, now); // Lower bass when intense
         bass.connect(bassGain);
         bassGain.connect(audioContext.destination);
-        bassGain.gain.setValueAtTime(0.05, now);
+        bassGain.gain.setValueAtTime(baseVolume, now);
         bassGain.gain.exponentialRampToValueAtTime(0.01, now + 2);
         bass.start(now);
         bass.stop(now + 2);
         
-        // Eerie melody notes (minor scale)
-        const melodyNotes = [220, 196, 175, 165, 147, 165, 175, 196];
+        // Eerie melody notes (minor scale) - faster and more dissonant when intense
+        const normalNotes = [220, 196, 175, 165, 147, 165, 175, 196];
+        const intenseNotes = [233, 220, 196, 175, 165, 147, 139, 131]; // More dissonant
+        const melodyNotes = intenseMusicActive ? intenseNotes : normalNotes;
+        
         melodyNotes.forEach((freq, i) => {
             const osc = audioContext.createOscillator();
             const gain = audioContext.createGain();
-            osc.type = 'triangle';
-            osc.frequency.setValueAtTime(freq, now + i * 0.25);
+            osc.type = intenseMusicActive ? 'sawtooth' : 'triangle'; // Harsher sound when intense
+            osc.frequency.setValueAtTime(freq, now + i * tempo);
             osc.connect(gain);
             gain.connect(audioContext.destination);
-            gain.gain.setValueAtTime(0.03, now + i * 0.25);
-            gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.25 + 0.2);
-            osc.start(now + i * 0.25);
-            osc.stop(now + i * 0.25 + 0.25);
+            const noteVolume = 0.03 + musicIntensity * 0.04;
+            gain.gain.setValueAtTime(noteVolume, now + i * tempo);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + i * tempo + tempo * 0.8);
+            osc.start(now + i * tempo);
+            osc.stop(now + i * tempo + tempo);
         });
         
-        // Schedule next loop
-        setTimeout(playLoop, 2000);
+        // Add heartbeat-like pulse when near PAC-MAN
+        if (intenseMusicActive) {
+            // First beat
+            const beat1 = audioContext.createOscillator();
+            const beat1Gain = audioContext.createGain();
+            beat1.type = 'sine';
+            beat1.frequency.setValueAtTime(60, now);
+            beat1.connect(beat1Gain);
+            beat1Gain.connect(audioContext.destination);
+            beat1Gain.gain.setValueAtTime(0.15, now);
+            beat1Gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            beat1.start(now);
+            beat1.stop(now + 0.15);
+            
+            // Second beat (slightly quieter)
+            const beat2 = audioContext.createOscillator();
+            const beat2Gain = audioContext.createGain();
+            beat2.type = 'sine';
+            beat2.frequency.setValueAtTime(60, now + 0.2);
+            beat2.connect(beat2Gain);
+            beat2Gain.connect(audioContext.destination);
+            beat2Gain.gain.setValueAtTime(0.1, now + 0.2);
+            beat2Gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+            beat2.start(now + 0.2);
+            beat2.stop(now + 0.35);
+        }
+        
+        // Schedule next loop - faster when intense
+        const loopInterval = intenseMusicActive ? 1200 : 2000;
+        setTimeout(playLoop, loopInterval);
     };
     
     playLoop();
+}
+
+function updateMusicIntensity() {
+    // Calculate music intensity based on distance to PAC-MAN
+    const dist = camera.position.distanceTo(pacman.mesh.position);
+    const intensityThreshold = 15;
+    
+    if (dist < intensityThreshold) {
+        musicIntensity = Math.max(0, 1 - dist / intensityThreshold);
+        intenseMusicActive = dist < 10; // Full intensity when very close
+    } else {
+        musicIntensity = 0;
+        intenseMusicActive = false;
+    }
 }
 
 function playSound(soundName) {
@@ -1394,12 +1455,80 @@ function updateGhosts(delta) {
         // Floating animation
         ghost.mesh.position.y = 1 + Math.sin(Date.now() * 0.003 + ghosts.indexOf(ghost)) * 0.2;
         
+        // Create slime trail
+        const currentTime = Date.now() / 1000;
+        if (currentTime - ghost.lastSlimeTime > SLIME_TRAIL_INTERVAL) {
+            createSlimeDrop(ghost);
+            ghost.lastSlimeTime = currentTime;
+        }
+        
         // Look at player if close
         const distToPlayer = ghost.mesh.position.distanceTo(camera.position);
         if (distToPlayer < 8) {
             ghost.mesh.lookAt(camera.position.x, ghost.mesh.position.y, camera.position.z);
         }
     });
+}
+
+// Slime trail functions
+// Shared geometry for better performance
+const slimeGeometry = new THREE.CircleGeometry(SLIME_TRAIL_SIZE, 8);
+
+function createSlimeDrop(ghost) {
+    // Create a glowing slime drop at the ghost's position
+    // Each slime gets its own material for individual opacity control
+    const slimeMaterial = new THREE.MeshStandardMaterial({
+        color: ghost.color,
+        emissive: ghost.color,
+        emissiveIntensity: 0.5,
+        transparent: true,
+        opacity: 0.8,
+        side: THREE.DoubleSide
+    });
+    
+    const slime = new THREE.Mesh(slimeGeometry, slimeMaterial);
+    slime.rotation.x = -Math.PI / 2; // Lay flat on ground
+    
+    // Vary size via scale instead of creating new geometry
+    const sizeVariation = 0.8 + Math.random() * 0.4;
+    slime.scale.set(sizeVariation, sizeVariation, 1);
+    
+    slime.position.set(
+        ghost.mesh.position.x + (Math.random() - 0.5) * 0.3,
+        0.05, // Just above the floor
+        ghost.mesh.position.z + (Math.random() - 0.5) * 0.3
+    );
+    
+    scene.add(slime);
+    slimeTrails.push({
+        mesh: slime,
+        createdAt: Date.now() / 1000,
+        color: ghost.color,
+        baseScale: sizeVariation
+    });
+}
+
+function updateSlimeTrails() {
+    const currentTime = Date.now() / 1000;
+    
+    // Update and remove expired slime
+    for (let i = slimeTrails.length - 1; i >= 0; i--) {
+        const slime = slimeTrails[i];
+        const age = currentTime - slime.createdAt;
+        
+        if (age > SLIME_TRAIL_LIFETIME) {
+            // Remove expired slime
+            scene.remove(slime.mesh);
+            // Dispose only the material (geometry is shared)
+            slime.mesh.material.dispose();
+            slimeTrails.splice(i, 1);
+        } else {
+            // Fade out slime based on age
+            const fadeProgress = age / SLIME_TRAIL_LIFETIME;
+            slime.mesh.material.opacity = 0.8 * (1 - fadeProgress);
+            slime.mesh.material.emissiveIntensity = 0.5 * (1 - fadeProgress);
+        }
+    }
 }
 
 let lastWarningTime = 0;
@@ -1464,7 +1593,9 @@ function animate() {
     updatePlayer(delta);
     updatePacman(delta);
     updateGhosts(delta);
+    updateSlimeTrails();
     updateWarning();
+    updateMusicIntensity();
     checkPlayerPacmanCollision();
     checkPlayerAtSafeZone();
     
